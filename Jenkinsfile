@@ -1,63 +1,101 @@
 pipeline {
   agent {
     kubernetes {
-      defaultContainer 'kaniko'
+      label 'wordsmith-agent'
+      defaultContainer 'jnlp'
       yaml """
 apiVersion: v1
 kind: Pod
+metadata:
+  name: wordsmith-agent
 spec:
+  # Cho phép kéo image private từ Harbor
+  imagePullSecrets:
+    - name: harbor-pull
   containers:
-  - name: kaniko
-    image: gcr.io/kaniko-project/executor:debug
-    command:
-      - cat
-    tty: true
-    volumeMounts:
-      - name: kaniko-secret
-        mountPath: /kaniko/.docker
-  - name: kubectl
-    image: bitnami/kubectl:latest
-    command:
-      - cat
-    tty: true
+    - name: kaniko
+      image: harbor.local:30649/wordsmith/kaniko:latest
+      command:
+        - cat                       # Giữ container sống để Jenkins exec lệnh
+      tty: true
+      volumeMounts:
+        - name: kaniko-secret
+          mountPath: /kaniko/.docker
+    - name: kubectl
+      image: harbor.local:30649/wordsmith/kubectl:latest
+      command:
+        - cat
+      tty: true
   volumes:
     - name: kaniko-secret
       secret:
-        secretName: regcred
-      """
+        secretName: kaniko-secret
+"""
     }
   }
+
   environment {
-    // Định nghĩa registry Harbor và project
-    HARBOR_URL = 'harbor.mycompany.com/library'
+    HARBOR    = 'harbor.local:30649'
+    PROJECT   = 'wordsmith'
+    IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_ID}"
+    IMAGE     = "${HARBOR}/${PROJECT}/wordsmith-app:${IMAGE_TAG}"
   }
-  // triggers {
-    // Kích hoạt pipeline khi có push lên nhánh main (có thể dùng GitHub hook)
-    // triggerSimple('@daily') // ví dụ: hoặc githubPush()
-  // }
+
   stages {
-    stage('Build and Push Images') {
+    stage('Checkout') {
       steps {
-        // Build image cho api và web bằng Kaniko
+        // Pull code từ GitHub
+        checkout scm
+      }
+    }
+
+    stage('Build & Push Image') {
+      steps {
         container('kaniko') {
+          // Build và push image qua Kaniko
           sh """
-            /kaniko/executor --context api --insecure \\
-              --destination=${HARBOR_URL}/wordsmith-api:${env.BUILD_NUMBER}
-            /kaniko/executor --context web --insecure \\
-              --destination=${HARBOR_URL}/wordsmith-web:${env.BUILD_NUMBER}
+            /kaniko/executor \
+              --context=\$WORKSPACE \
+              --dockerfile=\$WORKSPACE/Dockerfile \
+              --destination=${IMAGE} \
+              --cache=true
           """
         }
       }
     }
+
+    stage('Wait for Harbor Scan') {
+      steps {
+        // Chờ Harbor scan đảm bảo image sạch vulnerability ≥ Medium
+        waitForHarborWebHook abortPipeline: true,
+                           credentialsId: 'harbor-robot',
+                           server: "${HARBOR}",
+                           fullImageName: "${IMAGE}",
+                           severity: 'Medium'
+      }
+    }
+
     stage('Deploy to Kubernetes') {
       steps {
-        // Triển khai bằng Kustomize
         container('kubectl') {
-          withKubeConfig([credentialsId: 'kubeconfig-credential']) {
-            sh 'kubectl apply -k ./k8s-manifests'
+          // Sử dụng kubeconfig đã lưu trong Jenkins để apply Kustomize
+          withCredentials([kubeconfigFile(credentialsId: 'orbstack-kubeconfig', variable: 'KUBECONFIG')]) {
+            sh """
+              kubectl apply -k \$WORKSPACE
+              kubectl rollout status deployment/wordsmith -n ${PROJECT}
+            """
           }
         }
       }
+    }
+  }
+
+  post {
+    success {
+      echo "✅ Pipeline succeeded: deployed image ${IMAGE}"
+    }
+    failure {
+      echo "❌ Pipeline failed – xem logs phía trên để debug"
     }
   }
 }
