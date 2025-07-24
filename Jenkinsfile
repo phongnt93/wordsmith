@@ -58,7 +58,7 @@ spec:
               --dockerfile=$WORKSPACE/Dockerfile \
               --destination=${IMAGE} \
               --insecure=false \
-              --skip-tls-verify \
+              --skip-tls-verify=true \
               --cache=true
           '''
         }
