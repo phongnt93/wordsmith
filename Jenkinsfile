@@ -6,25 +6,25 @@ pipeline {
       yaml """
 apiVersion: v1
 kind: Pod
-metadata:
-  name: wordsmith-agent
 spec:
-  # Cho phép kéo image private từ Harbor
+  # Ánh xạ hostnames về IP của node (Ingress Nginx NodePort)
+  hostAliases:
+  - ip: "192.168.194.229"
+    hostnames:
+    - "harbor.local"
   imagePullSecrets:
     - name: harbor-pull
   containers:
     - name: kaniko
       image: harbor.local:30649/wordsmith/kaniko:latest
-      command:
-        - cat                       # Giữ container sống để Jenkins exec lệnh
+      command: ['cat']
       tty: true
       volumeMounts:
         - name: kaniko-secret
           mountPath: /kaniko/.docker
     - name: kubectl
       image: harbor.local:30649/wordsmith/kubectl:latest
-      command:
-        - cat
+      command: ['cat']
       tty: true
   volumes:
     - name: kaniko-secret
@@ -43,16 +43,12 @@ spec:
 
   stages {
     stage('Checkout') {
-      steps {
-        // Pull code từ GitHub
-        checkout scm
-      }
+      steps { checkout scm }
     }
 
     stage('Build & Push Image') {
       steps {
         container('kaniko') {
-          // Build và push image qua Kaniko
           sh """
             /kaniko/executor \
               --context=\$WORKSPACE \
@@ -66,7 +62,6 @@ spec:
 
     stage('Wait for Harbor Scan') {
       steps {
-        // Chờ Harbor scan đảm bảo image sạch vulnerability ≥ Medium
         waitForHarborWebHook abortPipeline: true,
                            credentialsId: 'harbor-robot',
                            server: "${HARBOR}",
@@ -78,7 +73,6 @@ spec:
     stage('Deploy to Kubernetes') {
       steps {
         container('kubectl') {
-          // Sử dụng kubeconfig đã lưu trong Jenkins để apply Kustomize
           withCredentials([kubeconfigFile(credentialsId: 'orbstack-kubeconfig', variable: 'KUBECONFIG')]) {
             sh """
               kubectl apply -k \$WORKSPACE
@@ -91,12 +85,8 @@ spec:
   }
 
   post {
-    success {
-      echo "✅ Pipeline succeeded: deployed image ${IMAGE}"
-    }
-    failure {
-      echo "❌ Pipeline failed – xem logs phía trên để debug"
-    }
+    success { echo "✅ Deployed ${IMAGE}" }
+    failure { echo "❌ Pipeline failed, check logs." }
   }
 }
 
