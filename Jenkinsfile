@@ -31,10 +31,10 @@ spec:
     // Định nghĩa registry Harbor và project
     HARBOR_URL = 'harbor.mycompany.com/library'
   }
-  triggers {
-    // Kích hoạt pipeline khi có push lên nhánh main (có thể dùng GitHub hook)
-    // triggerSimple('@daily') // ví dụ: hoặc githubPush()
-  }
+  #triggers {
+  #  // Kích hoạt pipeline khi có push lên nhánh main (có thể dùng GitHub hook)
+  #  // triggerSimple('@daily') // ví dụ: hoặc githubPush()
+  #}
   stages {
     stage('Build and Push Images') {
       steps {
