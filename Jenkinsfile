@@ -1,74 +1,51 @@
 pipeline {
-  agent {
-    kubernetes {
-      label 'wordsmith-agent'
-      defaultContainer 'jnlp'
-      yaml """
-apiVersion: v1
-kind: Pod
-spec:
-  dnsPolicy: Default
-  hostAliases:
-    - ip: "192.168.194.229"
-      hostnames:
-        - "harbor.local"
-  imagePullSecrets:
-    - name: harbor-pull
-  volumes:
-    - name: harbor-ca
-      secret:
-        secretName: harbor-ca-cert
-    - name: kaniko-secret
-      secret:
-        secretName: kaniko-secret
-  containers:
-    - name: kaniko
-      image: harbor.local/wordsmith/kaniko:latest
-      command:
-        - cat
-      tty: true
-      env:
-        - name: SSL_CERT_DIR
-          value: /kaniko/ca-cert
-      volumeMounts:
-        - name: kaniko-secret
-          mountPath: /kaniko/.docker
-        - name: harbor-ca
-          mountPath: /kaniko/ca-cert
-          readOnly: true
-    - name: kubectl
-      image: harbor.local/wordsmith/kubectl:latest
-      command:
-        - cat
-      tty: true
-      env:
-        - name: SSL_CERT_DIR
-          value: /etc/ssl/certs/harbor
-      volumeMounts:
-        - name: harbor-ca
-          mountPath: /etc/ssl/certs/harbor
-          readOnly: true
-"""
-    }
+  agent any
+  environment {
+    PROJECT = 'wordsmith'
+    IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_ID}"
+    IMAGE = "nguyenphong8852/${PROJECT}:${IMAGE_TAG}"
   }
-
   stages {
-    stage('Checkout') { steps { checkout scm } }
-
-    stage('Build & Push') {
+    stage('Checkout') {
       steps {
-        container('kaniko') {
+        git branch: 'main',
+            url: 'git@github.com:phongnt93/wordsmith.git',
+            credentialsId: 'github-wordsmith-ssh'
+      }
+    }
+
+    stage('Build & Push Image') {
+      steps {
+        withCredentials([usernamePassword(credentialsId: 'jenkins-dockerhub', 
+                                          usernameVariable: 'DOCKERHUB_USER',
+                                          passwordVariable: 'DOCKERHUB_PWD')]) {
           sh '''
-            /kaniko/executor \
-              --context=$WORKSPACE \
-              --dockerfile=Dockerfile \
-              --destination=${HARBOR}/${PROJECT}/wordsmith-app:${BUILD_ID} \
-              --cache=true
+            echo "$DOCKERHUB_PWD" | docker login -u "$DOCKERHUB_USER" --password-stdin
+            docker build -t $IMAGE .
+            docker push $IMAGE
           '''
         }
       }
     }
-    // … các stage còn lại …
+
+    stage('Deploy to Kubernetes') {
+      steps {
+        withCredentials([kubeconfigFile(credentialsId: 'orbstack-kubeconfig', variable: 'KUBECONFIG')]) {
+          sh '''
+            kubectl apply -k $WORKSPACE
+            kubectl rollout status deployment/wordsmith -n wordsmith
+          '''
+        }
+      }
+    }
+  }
+  post {
+    success {
+      echo "✅ Deployment finished: $IMAGE"
+    }
+    failure {
+      echo "❌ CI/CD pipeline failed, check logs"
+    }
   }
 }
 
