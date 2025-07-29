@@ -19,19 +19,35 @@ spec:
       command:
         - cat
       tty: true
+      env:
+        - name: SSL_CERT_DIR
+          value: /kaniko/ca-cert
       volumeMounts:
         - name: kaniko-secret
           mountPath: /kaniko/.docker
+        - name: harbor-ca-cert
+          mountPath: /kaniko/ca-cert
+          readOnly: true
     - name: kubectl
       image: harbor.local/wordsmith/kubectl:latest
       command:
         - cat
       tty: true
+      env:
+        - name: SSL_CERT_DIR
+          value: /etc/ssl/certs/harbor
+      volumeMounts:
+        - name: harbor-ca-cert
+          mountPath: /etc/ssl/certs/harbor
+          readOnly: true
   volumes:
     - name: kaniko-secret
       secret:
         secretName: kaniko-secret
-      """
+    - name: harbor-ca-cert
+      secret:
+        secretName: harbor-ca-cert
+"""
     }
   }
 
@@ -57,8 +73,6 @@ spec:
               --context=$WORKSPACE \
               --dockerfile=$WORKSPACE/Dockerfile \
               --destination=${IMAGE} \
-              --insecure=false \
-              --skip-tls-verify=true \
               --cache=true
           '''
         }
