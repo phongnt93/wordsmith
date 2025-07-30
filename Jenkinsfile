@@ -9,10 +9,9 @@ kind: Pod
 spec:
   containers:
     - name: kaniko
-      image: gcr.io/kaniko-project/executor:latest
+      image: gcr.io/kaniko-project/executor:debug
       command:
-        - sleep
-        - "infinity"
+        - cat
       tty: true
       volumeMounts:
         - name: docker-credentials
@@ -20,8 +19,9 @@ spec:
     - name: kubectl
       image: bitnami/kubectl:1.27
       command:
-        - sleep
-        - "infinity"
+        - sh
+        - -c
+        - sleep infinity
       tty: true
   volumes:
     - name: docker-credentials
