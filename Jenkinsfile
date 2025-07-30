@@ -28,12 +28,6 @@ spec:
       volumeMounts:
         - name: workspace-volume
           mountPath: /workspace
-    - name: jnlp
-      image: jenkins/inbound-agent:4.13-3
-      args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
-      volumeMounts:
-        - name: workspace-volume
-          mountPath: /home/jenkins/agent
   volumes:
     - name: docker-credentials
       projected:
@@ -58,7 +52,6 @@ spec:
   stages {
     stage('Checkout') {
       steps {
-        // Checkout vào /home/jenkins/agent/workspace nhưng Kaniko sẽ nhìn vào /workspace nhờ mount
         checkout([$class: 'GitSCM',
                   branches: [[name: '*/main']],
                   userRemoteConfigs: [[
