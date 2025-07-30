@@ -9,7 +9,7 @@ kind: Pod
 spec:
   containers:
     - name: docker
-      image: docker/compose:1.29.2-dind
+      image: docker:24.0.5-dind
       securityContext:
         privileged: true
       command:
@@ -21,7 +21,7 @@ spec:
         - name: dockersock
           mountPath: /var/run/docker.sock
         - name: docker-config
-          mountPath: /home/jenkins/.docker
+          mountPath: /root/.docker
     - name: kubectl
       image: bitnami/kubectl:1.27
       command:
@@ -49,9 +49,9 @@ spec:
   }
 
   environment {
-    // IMAGE_TAG có thể dùng để override tag trong docker-compose nếu bạn cấu hình biến này trong compose
-    IMAGE_TAG   = "${env.BRANCH_NAME}-${env.BUILD_ID}"
+    IMAGE_TAG    = "${env.BRANCH_NAME}-${env.BUILD_ID}"
     COMPOSE_FILE = "docker-compose.yml"
+    // (nếu bạn dùng biến trong compose, export ở đây)
   }
 
   stages {
@@ -70,12 +70,12 @@ spec:
       steps {
         container('docker') {
           sh """
-            # đảm bảo đăng nhập Docker Hub
+            # Kiểm tra Docker daemon
             docker info
-            # build & tag theo docker-compose.yml
-            docker-compose -f ${COMPOSE_FILE} build
-            # push các image đã build (compose sẽ push theo image: trong file)
-            docker-compose -f ${COMPOSE_FILE} push
+            # Build & tag theo docker-compose.yml
+            docker compose -f ${COMPOSE_FILE} build
+            # Push các image đã build (compose sẽ push theo image: trong file)
+            docker compose -f ${COMPOSE_FILE} push
           """
         }
       }
@@ -85,9 +85,7 @@ spec:
       steps {
         container('kubectl') {
           sh """
-            # apply toàn bộ kustomization từ thư mục k8s/
             kubectl apply -k ${WORKSPACE}/k8s
-            # chờ rollout hoàn thành
             kubectl rollout status deployment/api -n wordsmith
             kubectl rollout status deployment/web -n wordsmith
             kubectl rollout status statefulset/db -n wordsmith || true
