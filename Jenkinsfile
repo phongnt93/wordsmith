@@ -16,6 +16,8 @@ spec:
       volumeMounts:
         - name: docker-credentials
           mountPath: /kaniko/.docker
+        - name: workspace-volume
+          mountPath: /workspace
     - name: kubectl
       image: bitnami/kubectl:1.27
       command:
@@ -23,6 +25,15 @@ spec:
         - -c
         - sleep infinity
       tty: true
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /workspace
+    - name: jnlp
+      image: jenkins/inbound-agent:4.13-3
+      args: ['\$(JENKINS_SECRET)', '\$(JENKINS_NAME)']
+      volumeMounts:
+        - name: workspace-volume
+          mountPath: /home/jenkins/agent
   volumes:
     - name: docker-credentials
       projected:
@@ -32,6 +43,8 @@ spec:
               items:
                 - key: .dockerconfigjson
                   path: config.json
+    - name: workspace-volume
+      emptyDir: {}
 """
     }
   }
@@ -45,6 +58,7 @@ spec:
   stages {
     stage('Checkout') {
       steps {
+        // Checkout vào /home/jenkins/agent/workspace nhưng Kaniko sẽ nhìn vào /workspace nhờ mount
         checkout([$class: 'GitSCM',
                   branches: [[name: '*/main']],
                   userRemoteConfigs: [[
@@ -59,7 +73,7 @@ spec:
         container('kaniko') {
           sh '''
             /kaniko/executor \
-              --context $WORKSPACE \
+              --context /workspace \
               --dockerfile Dockerfile \
               --destination ${IMAGE} \
               --cache=true
@@ -72,7 +86,7 @@ spec:
       steps {
         container('kubectl') {
           sh '''
-            kubectl apply -k $WORKSPACE/k8s
+            kubectl apply -k /workspace/k8s
             kubectl rollout status deployment/wordsmith -n wordsmith
           '''
         }
