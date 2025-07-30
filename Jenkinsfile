@@ -7,56 +7,61 @@ pipeline {
 apiVersion: v1
 kind: Pod
 spec:
-  imagePullSecrets:
-    - name: dockerhub-secret
   containers:
     - name: kaniko
       image: gcr.io/kaniko-project/executor:latest
-      command:
-        - cat
+      command: ["cat"]
       tty: true
       volumeMounts:
-        - name: kaniko-secret
+        - name: docker-credentials
           mountPath: /kaniko/.docker
     - name: kubectl
       image: bitnami/kubectl:1.27
-      command:
-        - cat
+      command: ["cat"]
       tty: true
   volumes:
-    - name: kaniko-secret
-      secret:
-        secretName: kaniko-secret
+    - name: docker-credentials
+      projected:
+        sources:
+          - secret:
+              name: dockerhub-secret
+              items:
+                - key: .dockerconfigjson
+                  path: config.json
 """
     }
   }
 
   environment {
-    DOCKERHUB = 'docker.io'
-    IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_ID}"
-    IMAGE = "${DOCKERHUB}/nguyenphong8852/wordsmith-app:${IMAGE_TAG}"
+    DOCKERHUB    = 'docker.io'
+    IMAGE_TAG    = "${env.BRANCH_NAME}-${env.BUILD_ID}"
+    IMAGE        = "${DOCKERHUB}/nguyenphong8852/wordsmith-app:${IMAGE_TAG}"
   }
 
   stages {
     stage('Checkout') {
       steps {
-        checkout sshagent(credentials: ['github-wordsmith-ssh']) {
-          sh 'git fetch && git checkout origin/main'
-        }
+        // Clone repo qua SSH
+        checkout([$class: 'GitSCM',
+                  branches: [[name: '*/main']],
+                  userRemoteConfigs: [[
+                    url: 'git@github.com:phongnt93/wordsmith.git',
+                    credentialsId: 'github-wordsmith-ssh'
+                  ]]])
       }
     }
 
     stage('Build & Push') {
       steps {
+        // Chạy trong container kaniko, Kaniko sẽ tự đọc /kaniko/.docker/config.json
         container('kaniko') {
-          sh """
-            echo "{\"auths\": {\"${DOCKERHUB}\": {\"auth\": \"$(echo -n \"${DOCKERHUB_USER}:${DOCKERHUB_PWD}\" | base64)\"}}}" > /kaniko/.docker/config.json
+          sh '''
             /kaniko/executor \
-              --context=$WORKSPACE \
-              --dockerfile=Dockerfile \
-              --destination=${IMAGE} \
+              --context $WORKSPACE \
+              --dockerfile Dockerfile \
+              --destination ${IMAGE} \
               --cache=true
-          """
+          '''
         }
       }
     }
@@ -64,12 +69,11 @@ spec:
     stage('Deploy to K8s') {
       steps {
         container('kubectl') {
-          withCredentials([kubeconfigFile(credentialsId: 'orbstack-kubeconfig', variable: 'KUBECONFIG')]) {
-            sh """
-              kubectl apply -k $WORKSPACE
-              kubectl rollout status deployment/wordsmith -n wordsmith
-            """
-          }
+          // Nếu kustomization.yaml nằm trong thư mục k8s/
+          sh '''
+            kubectl apply -k $WORKSPACE/k8s
+            kubectl rollout status deployment/wordsmith -n wordsmith
+          '''
         }
       }
     }
@@ -84,3 +88,4 @@ spec:
     }
   }
 }
+
