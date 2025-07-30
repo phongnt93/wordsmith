@@ -8,16 +8,20 @@ apiVersion: v1
 kind: Pod
 spec:
   containers:
-    - name: kaniko
-      image: gcr.io/kaniko-project/executor:debug
+    - name: docker
+      image: docker/compose:1.29.2-dind
+      securityContext:
+        privileged: true
       command:
-        - cat
-      tty: true
+        - dockerd-entrypoint.sh
+      args:
+        - --host=tcp://0.0.0.0:2375
+        - --host=unix:///var/run/docker.sock
       volumeMounts:
-        - name: docker-credentials
-          mountPath: /kaniko/.docker
-        - name: workspace-volume
-          mountPath: /workspace
+        - name: dockersock
+          mountPath: /var/run/docker.sock
+        - name: docker-config
+          mountPath: /home/jenkins/.docker
     - name: kubectl
       image: bitnami/kubectl:1.27
       command:
@@ -26,10 +30,13 @@ spec:
         - sleep infinity
       tty: true
       volumeMounts:
-        - name: workspace-volume
-          mountPath: /workspace
+        - name: dockersock
+          mountPath: /var/run/docker.sock
   volumes:
-    - name: docker-credentials
+    - name: dockersock
+      hostPath:
+        path: /var/run/docker.sock
+    - name: docker-config
       projected:
         sources:
           - secret:
@@ -37,40 +44,39 @@ spec:
               items:
                 - key: .dockerconfigjson
                   path: config.json
-    - name: workspace-volume
-      emptyDir: {}
 """
     }
   }
 
   environment {
-    DOCKERHUB = 'docker.io'
-    IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_ID}"
-    IMAGE     = "${DOCKERHUB}/nguyenphong8852/wordsmith-app:${IMAGE_TAG}"
+    // IMAGE_TAG có thể dùng để override tag trong docker-compose nếu bạn cấu hình biến này trong compose
+    IMAGE_TAG   = "${env.BRANCH_NAME}-${env.BUILD_ID}"
+    COMPOSE_FILE = "docker-compose.yml"
   }
 
   stages {
     stage('Checkout') {
       steps {
         checkout([$class: 'GitSCM',
-                  branches: [[name: '*/main']],
-                  userRemoteConfigs: [[
-                    url: 'git@github.com:phongnt93/wordsmith.git',
-                    credentialsId: 'github-wordsmith-ssh'
-                  ]]])
+          branches: [[name: '*/main']],
+          userRemoteConfigs: [[
+            url: 'git@github.com:phongnt93/wordsmith.git',
+            credentialsId: 'github-wordsmith-ssh'
+          ]]])
       }
     }
 
-    stage('Build & Push') {
+    stage('Build & Push with Docker Compose') {
       steps {
-        container('kaniko') {
-          sh '''
-            /kaniko/executor \
-              --context /workspace \
-              --dockerfile Dockerfile \
-              --destination ${IMAGE} \
-              --cache=true
-          '''
+        container('docker') {
+          sh """
+            # đảm bảo đăng nhập Docker Hub
+            docker info
+            # build & tag theo docker-compose.yml
+            docker-compose -f ${COMPOSE_FILE} build
+            # push các image đã build (compose sẽ push theo image: trong file)
+            docker-compose -f ${COMPOSE_FILE} push
+          """
         }
       }
     }
@@ -78,10 +84,14 @@ spec:
     stage('Deploy to K8s') {
       steps {
         container('kubectl') {
-          sh '''
-            kubectl apply -k /workspace/k8s
-            kubectl rollout status deployment/wordsmith -n wordsmith
-          '''
+          sh """
+            # apply toàn bộ kustomization từ thư mục k8s/
+            kubectl apply -k ${WORKSPACE}/k8s
+            # chờ rollout hoàn thành
+            kubectl rollout status deployment/api -n wordsmith
+            kubectl rollout status deployment/web -n wordsmith
+            kubectl rollout status statefulset/db -n wordsmith || true
+          """
         }
       }
     }
@@ -89,10 +99,10 @@ spec:
 
   post {
     success {
-      echo "✅ Deployed ${IMAGE} successfully"
+      echo "✅ Build/push và Deploy lên K8s thành công!"
     }
     failure {
-      echo "❌ Pipeline failed"
+      echo "❌ Pipeline thất bại!"
     }
   }
 }
