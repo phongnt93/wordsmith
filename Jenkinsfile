@@ -10,14 +10,18 @@ spec:
   containers:
     - name: kaniko
       image: gcr.io/kaniko-project/executor:latest
-      command: ["cat"]
+      command:
+        - sleep
+        - "infinity"
       tty: true
       volumeMounts:
         - name: docker-credentials
           mountPath: /kaniko/.docker
     - name: kubectl
       image: bitnami/kubectl:1.27
-      command: ["cat"]
+      command:
+        - sleep
+        - "infinity"
       tty: true
   volumes:
     - name: docker-credentials
@@ -33,15 +37,14 @@ spec:
   }
 
   environment {
-    DOCKERHUB    = 'docker.io'
-    IMAGE_TAG    = "${env.BRANCH_NAME}-${env.BUILD_ID}"
-    IMAGE        = "${DOCKERHUB}/nguyenphong8852/wordsmith-app:${IMAGE_TAG}"
+    DOCKERHUB = 'docker.io'
+    IMAGE_TAG = "${env.BRANCH_NAME}-${env.BUILD_ID}"
+    IMAGE     = "${DOCKERHUB}/nguyenphong8852/wordsmith-app:${IMAGE_TAG}"
   }
 
   stages {
     stage('Checkout') {
       steps {
-        // Clone repo qua SSH
         checkout([$class: 'GitSCM',
                   branches: [[name: '*/main']],
                   userRemoteConfigs: [[
@@ -53,7 +56,6 @@ spec:
 
     stage('Build & Push') {
       steps {
-        // Chạy trong container kaniko, Kaniko sẽ tự đọc /kaniko/.docker/config.json
         container('kaniko') {
           sh '''
             /kaniko/executor \
@@ -69,7 +71,6 @@ spec:
     stage('Deploy to K8s') {
       steps {
         container('kubectl') {
-          // Nếu kustomization.yaml nằm trong thư mục k8s/
           sh '''
             kubectl apply -k $WORKSPACE/k8s
             kubectl rollout status deployment/wordsmith -n wordsmith
